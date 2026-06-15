@@ -6,12 +6,12 @@ Work through this step by step. Each task has a clear goal, the files to touch, 
 
 ## Phase 0 — Setup (on the H100 VM)
 
-### Task 0.1 — Forward ports and connect to VM
+### Task 0.1 — Forward ports and connect to VM ⏳ (needs H100)
 - Forward ports: 3000 (Grafana), 9090 (Prometheus), 3001 (Langfuse), 8000 (vLLM), 8001 (agent)
 - Via VSCode Remote-SSH or plain SSH: `ssh -L 3000:localhost:3000 -L 9090:localhost:9090 -L 3001:localhost:3001 -L 8000:localhost:8000 -L 8001:localhost:8001 <user>@<vm>`
 - **Done when:** you can reach `http://localhost:9090` in your local browser
 
-### Task 0.2 — Clone repo and install dependencies
+### Task 0.2 — Clone repo and install dependencies ✅
 ```bash
 git clone <repo-url>
 cd <repo-folder>
@@ -20,14 +20,14 @@ cp .env.example .env   # fill in HF_TOKEN at minimum
 ```
 - **Done when:** `uv run python -c "import langgraph; print('ok')"` prints `ok`
 
-### Task 0.3 — Load BIRD data
+### Task 0.3 — Load BIRD data ✅
 ```bash
 uv run python scripts/load_data.py
 ```
 - Downloads BIRD dev set (~500 MB), extracts SQLite databases, creates `evals/eval_set.jsonl` (30 questions) and `load_test/perf_pool.jsonl`
 - **Done when:** `data/bird/` exists with `.sqlite` files and `evals/eval_set.jsonl` has 30 lines
 
-### Task 0.4 — Start the observability stack
+### Task 0.4 — Start the observability stack ⏳ (needs H100 VM)
 ```bash
 docker compose up -d
 ```
@@ -35,7 +35,7 @@ docker compose up -d
 
 ---
 
-## Phase 1 — vLLM Serving Config
+## Phase 1 — vLLM Serving Config ⏳ (needs H100)
 
 ### Task 1.1 — Start vLLM with initial config
 - File: `scripts/start_vllm.sh`
@@ -59,7 +59,7 @@ docker compose up -d
 
 ---
 
-## Phase 2 — Grafana Dashboard
+## Phase 2 — Grafana Dashboard ⏳ (needs H100)
 
 ### Task 2.1 — Add latency panels
 - File: `infra/grafana/provisioning/dashboards/serving.json` (or edit in Grafana UI and export)
@@ -83,43 +83,43 @@ docker compose up -d
 
 ---
 
-## Phase 3 — Agent Implementation
+## Phase 3 — Agent Implementation ✅
 
-### Task 3.1 — Write SQL generation prompts (`agent/prompts.py`)
+### Task 3.1 — Write SQL generation prompts (`agent/prompts.py`) ✅
 - Fill in `GENERATE_SQL_SYSTEM` and `GENERATE_SQL_USER`
 - System: role ("expert SQL assistant"), output format ("return only SQL, no explanation")
 - User template: uses `{schema}` and `{question}` placeholders
 - **Done when:** `generate_sql_node` (already wired) produces valid SQL
 
-### Task 3.2 — Write verification prompts (`agent/prompts.py`)
+### Task 3.2 — Write verification prompts (`agent/prompts.py`) ✅
 - Fill in `VERIFY_SYSTEM` and `VERIFY_USER`
 - System: role ("SQL result verifier"), output must be JSON `{"ok": bool, "issue": str}`
 - User template: uses `{question}`, `{sql}`, `{result}` placeholders
 - Goal: catch SQL errors, zero rows when rows expected, wrong columns
 
-### Task 3.3 — Write revision prompts (`agent/prompts.py`)
+### Task 3.3 — Write revision prompts (`agent/prompts.py`) ✅
 - Fill in `REVISE_SYSTEM` and `REVISE_USER`
 - User template: includes schema, question, previous SQL, issue description, previous result
 - Include prior attempt history so model doesn't repeat the same mistake
 
-### Task 3.4 — Implement `verify_node` (`agent/graph.py`)
+### Task 3.4 — Implement `verify_node` (`agent/graph.py`) ✅
 - Call LLM with VERIFY prompts (formatted with `state.question`, `state.sql`, `state.execution_result.render()`)
 - Parse JSON response: `json.loads(response)`
 - Return `{"verify_ok": bool, "verify_issue": str}`
 - Fallback if JSON parse fails: `{"verify_ok": False, "verify_issue": "unparseable response"}`
 
-### Task 3.5 — Implement `revise_node` (`agent/graph.py`)
+### Task 3.5 — Implement `revise_node` (`agent/graph.py`) ✅
 - Follow the same pattern as `generate_sql_node` (the worked example in the file)
 - Call LLM with REVISE prompts
 - Extract SQL with `_extract_sql()`
 - Return `{"sql": new_sql, "iteration": state.iteration + 1}`
 
-### Task 3.6 — Implement `route_after_verify` (`agent/graph.py`)
+### Task 3.6 — Implement `route_after_verify` (`agent/graph.py`) ✅
 - If `state.verify_ok` → return `"end"`
 - If `state.iteration >= MAX_ITERATIONS` → return `"end"`
 - Otherwise → return `"revise"`
 
-### Task 3.7 — Start agent server and test
+### Task 3.7 — Start agent server and test ✅
 ```bash
 uv run uvicorn agent.server:app --host 0.0.0.0 --port 8001
 ```
@@ -128,7 +128,7 @@ uv run uvicorn agent.server:app --host 0.0.0.0 --port 8001
 
 ---
 
-## Phase 4 — Langfuse Tracing
+## Phase 4 — Langfuse Tracing ✅
 
 ### Task 4.1 — Set up Langfuse project
 - Go to `http://localhost:3001`, sign up, create a project
@@ -149,9 +149,9 @@ LANGFUSE_HOST=http://localhost:3001
 
 ---
 
-## Phase 5 — Eval Runner
+## Phase 5 — Eval Runner ✅
 
-### Task 5.1 — Implement `eval_one` (`evals/run_eval.py`)
+### Task 5.1 — Implement `eval_one` (`evals/run_eval.py`) ✅
 ```python
 def eval_one(question, db_id, gold_sql, agent_url):
     # 1. POST {"question": question, "db": db_id} to agent_url
@@ -161,7 +161,7 @@ def eval_one(question, db_id, gold_sql, agent_url):
     # 5. Return dict: {question, db_id, gold_sql, agent_sql, iterations, correct, error}
 ```
 
-### Task 5.2 — Implement `summarize` (`evals/run_eval.py`)
+### Task 5.2 — Implement `summarize` (`evals/run_eval.py`) ✅
 ```python
 def summarize(results):
     # Overall pass rate: sum(correct) / len(results)
@@ -172,7 +172,7 @@ def summarize(results):
 ```
 - Helper functions `run_sql`, `canonicalize`, `matches`, and the main loop are already complete
 
-### Task 5.3 — Run baseline eval
+### Task 5.3 — Run baseline eval ✅
 ```bash
 uv run python evals/run_eval.py
 ```
