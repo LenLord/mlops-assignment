@@ -16,18 +16,18 @@ Model: `Qwen/Qwen3-30B-A3B-Instruct-2507` on 1× H100 80GB HBM3
 
 ## 2. Baseline Eval Results (Phase 5)
 
-Eval set: 30 questions from BIRD-bench dev, run against `Qwen/Qwen3-30B-A3B-Instruct-2507`.
+Eval set: 30 questions from BIRD-bench dev, run against `Qwen/Qwen3-30B-A3B-Instruct-2507` on H100.
 
 | Metric | Value |
 |--------|-------|
-| Overall pass rate | 23.3% (7 / 30) |
-| Pass rate at iteration 0 | 26.7% (8 / 30) |
-| Pass rate at iteration 1 | 23.3% (7 / 30) |
-| Pass rate at iteration 2 | 23.3% (7 / 30) |
+| Overall pass rate | 16.7% (5 / 30) |
+| Pass rate at iteration 0 | 20.0% (6 / 30) |
+| Pass rate at iteration 1 | 16.7% (5 / 30) |
+| Pass rate at iteration 2 | 16.7% (5 / 30) |
 
-**Commentary:** The verify→revise loop did not improve quality — it slightly degraded it (26.7% → 23.3%). One question that was correct on the first attempt (card_games/Coldsnap) was incorrectly flagged by the verifier and revised into a wrong answer. Zero questions improved through revision. The loop is not earning its keep on this eval set with the current prompts.
+**Commentary:** The verify→revise loop is net-negative: the first-attempt pass rate (20%) degrades to 16.7% after revision and never recovers. The reviser breaks one question that was originally correct and fails to fix any others. The loop is costing one correct answer per 30 questions.
 
-Root cause: the verifier prompt is slightly over-aggressive — it flags single-row results as incomplete when the question uses the word "cards" (plural). This causes the revise node to drop a correct `LIMIT 1` and return multiple rows, breaking the match against gold SQL.
+Root cause: the verifier is too aggressive — it flags valid results where row count seems "low" given a plural noun in the question. The reviser then introduces SQL syntax errors (extra closing parentheses, wrong table aliases) that weren't in the original query. The model's revision pass is producing syntactically broken SQL more often than it produces fixes.
 
 ---
 
