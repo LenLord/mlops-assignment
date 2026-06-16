@@ -42,7 +42,10 @@ SLO target: P95 agent latency < 5s at 10 RPS over a 5-minute window.
 Saw P95=113s with 869 client errors and only 11% success → hypothesized uvicorn's default single-worker thread pool (~12 threads) was saturated: at 10 RPS × ~45s/request the backlog was ~450 concurrent requests, far beyond capacity. Changed to `--workers 4` (~48 threads). Result: client errors dropped to 45, success rate jumped to 79%, P50 halved to 18.9s — but P95 only moved to 95.7s. The congestion loop partially broke but per-call vLLM latency rose from ~2s to ~6s, indicating vLLM is now also under load.
 
 **Iteration 2:**
-Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth, causing each call to slow down. Changed `--max-num-seqs 128 → 32` to cap concurrency: fewer sequences run simultaneously, each gets more GPU bandwidth, per-call latency should drop. Queue depth will rise but calls will be faster.
+Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth. Changed `--max-num-seqs 128 → 32`. Result: backfired badly — queue depth exploded from 25 to ~150, vLLM per-call E2E latency spiked to 2 minutes, client_errors jumped from 45 to 2708, success rate collapsed to 7%. Fewer slots means faster individual calls but a far deeper queue; net latency got much worse. Reverted to max-num-seqs=128.
+
+**Iteration 3 — Structural SLO gap analysis:**
+Best achieved config: `--workers 4, --max-num-seqs 128` → P95=95.7s, 79% success rate. The SLO (P95 < 5s) requires each of 3 sequential LLM calls to complete in under 1.67s. Under 10 RPS load vLLM serves these calls at 4-7s each — the gap is structural, not tunable with vLLM flags alone. Closing it would require: (a) reducing agent LLM calls from 3 to 1 (remove verify/revise loop), or (b) a smaller/faster model. **SLO verdict: MISSED. Best P95 = 95.7s, gap = 19× over the 5s target.**
 
 ---
 
