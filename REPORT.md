@@ -48,21 +48,24 @@ Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approachin
 Saw P95 drop with each worker increase (1→4→8 workers: 113s→95s→55s) → hypothesized agent server thread pool still the binding constraint. Changed to `--workers 8`. Result: P50 = 12.9s, P95 = 55.2s, success rate 84%. vLLM per-call P50 stabilised at ~4-5s. Tried `--workers 16` next: vLLM started returning 500s under the higher concurrency — found the upper bound where agent capacity exceeds vLLM capacity.
 
 **Iteration 4:**
-Saw vLLM TTFT P95 at ~800ms with queue depth occasionally spiking → hypothesized prefill bottleneck during bursts (long prompts + short outputs is the textbook chunked-prefill case). Added `--enable-chunked-prefill`. Result: vLLM TTFT P95 dropped 37% (800ms → 500ms), queue depth max dropped 70% (30 → 9), throughput up 12%. **But agent P95 stayed at 57.7s** — confirms vLLM is no longer the bottleneck. Excellent diagnostic outcome: the metric we targeted moved (TTFT down), but E2E SLO didn't follow because the binding constraint is elsewhere.
+Saw vLLM TTFT P95 at ~800ms with queue depth occasionally spiking → hypothesized prefill bottleneck during bursts (long prompts + short outputs is the textbook chunked-prefill case). Added `--enable-chunked-prefill`. Result: vLLM TTFT P95 dropped 37% (800ms → 500ms), queue depth max dropped 70% (30 → 9), throughput up 12%. **But agent P95 stayed at 57.7s** — confirms vLLM is no longer the bottleneck; the binding constraint is elsewhere.
 
-**Final verdict — SLO MISSED with clear diagnosis:**
-Best config: `--workers 8`, `--max-num-seqs 128`, `--enable-chunked-prefill`, `--enable-prefix-caching`, `--kv-cache-dtype fp8`. Best P95 = 57.7s at 10 RPS; gap = 11× over the 5s target.
+**Iteration 5:**
+Saw vLLM healthy but agent P95 stuck → hypothesized paired bottleneck: 8 uvicorn workers + seqs=128 were each near their limit but blocked each other. Bumped `--workers 16` AND `--max-num-seqs 256` together (previously 16 workers alone caused vLLM 500s — needed more vLLM headroom to absorb the load). Result: agent P95 dropped 39% (57.7s → 35.0s), P50 to 10.5s, vLLM TTFT P95 collapsed to ~80ms, TPOT to ~50ms, queue depth stayed near 0, KV cache stable at 30-40%. All metrics moved together — this was the sweet spot pairing.
 
-Bottleneck analysis (steady state, from Grafana panel + load_test correlation):
-- vLLM per-call P50: ~4s; P95: ~5s (healthy, queue near zero with chunked prefill)
-- 3 LLM calls × 4s = 12s P50 — matches measured agent P50 of 13.8s ✓
-- Agent P95 of 57s is **45s above** what vLLM contributes — that 45s is FastAPI thread pool queuing under burst load
-- The synchronous `def answer` endpoint runs in starlette's anyio threadpool (default 40 threads/worker); with 8 workers we have 320 thread slots but bursts at 10 RPS pile up beyond that
+**Final verdict — SLO MISSED but with cleanly characterized gap:**
+Best config: `--workers 16`, `--max-num-seqs 256`, `--enable-chunked-prefill`, `--enable-prefix-caching`, `--kv-cache-dtype fp8`, `--gpu-memory-utilization 0.92`, `--max-model-len 4096`. Best P95 = 35.0s at 10 RPS; gap = 7× over the 5s target.
 
-**Why we stopped here:** Further tuning would require changes outside Phase 6's serving-config scope:
-1. **Remove verify→revise loop** (saves 2 LLM calls) — but it's a Phase 3 deliverable
-2. **Make `/answer` async** — requires `graph.ainvoke()` + server.py changes
-3. **Smaller model** — but Qwen3-30B-A3B is fixed by the assignment
+Bottleneck analysis (steady state, from Grafana + load_test correlation):
+- vLLM per-call P50: ~1.5s; P95: ~3-5s — very healthy now
+- 3 LLM calls × ~3.5s = 10.5s — matches measured agent P50 ✓
+- Agent P95 of 35s is ~20s above what vLLM contributes; that 20s is burst queuing + worst-case vLLM tail
+- vLLM has clear headroom: queue near 0, KV cache 30-40%. The remaining gap is on the agent's request handling, not the model
+
+**Why we stopped here:** Further closing the gap requires structural changes outside Phase 6's serving-config scope:
+1. **Remove verify→revise loop** (saves 2 LLM calls → ~3.5s P50) — but it's a Phase 3 deliverable
+2. **Make `/answer` async with `graph.ainvoke()`** — eliminates threadpool queuing
+3. **Smaller model or model-parallel** — but Qwen3-30B-A3B on 1× H100 is fixed by the assignment
 
 ---
 
