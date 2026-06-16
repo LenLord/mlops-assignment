@@ -63,7 +63,7 @@ def eval_one(question: dict, agent_url: str) -> dict:
     gold_sql = question["gold_sql"]
 
     try:
-        resp = httpx.post(agent_url, json={"question": q_text, "db": db_id}, timeout=120.0)
+        resp = httpx.post(agent_url, json={"question": q_text, "db": db_id, "tags": {"phase": "eval"}}, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:  # noqa: BLE001
