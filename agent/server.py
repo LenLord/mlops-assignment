@@ -22,11 +22,9 @@ from agent.graph import AgentState, graph  # noqa: E402
 # Langfuse callback handler. If keys are set we initialize it; failures
 # are NOT swallowed - a misconfigured Langfuse should not silently
 # produce zero traces.
-_lf_handler: Any = None
-if os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"):
-    from langfuse.langchain import CallbackHandler
-
-    _lf_handler = CallbackHandler()
+_langfuse_enabled = bool(
+    os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
+)
 
 
 app = FastAPI()
@@ -55,10 +53,11 @@ def health() -> dict[str, str]:
 @app.post("/answer", response_model=AnswerResponse)
 def answer(req: AnswerRequest) -> AnswerResponse:
     state = AgentState(question=req.question, db_id=req.db)
-    config: dict[str, Any] = {
-        "callbacks": [_lf_handler] if _lf_handler is not None else [],
-        "metadata": req.tags,
-    }
+    callbacks: list[Any] = []
+    if _langfuse_enabled:
+        from langfuse.langchain import CallbackHandler
+        callbacks = [CallbackHandler(metadata={"db": req.db, **req.tags})]
+    config: dict[str, Any] = {"callbacks": callbacks}
     try:
         final = graph.invoke(state, config=config)
     except Exception as e:  # noqa: BLE001
