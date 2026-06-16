@@ -33,7 +33,16 @@ Root cause: the verifier is too aggressive — it flags valid results where row 
 
 ## 3. SLO Tuning (Phase 6)
 
-*To be filled in after load testing on the H100.*
+SLO target: P95 agent latency < 5s at 10 RPS over a 5-minute window.
+
+**Baseline (10 RPS, 300s, default uvicorn — 1 worker):**
+- P50: 45.8s | P95: 113.8s | OK: 11% (332/3000) | client_errors: 869 | timeouts: 1631
+
+**Iteration 1:**
+Saw P95=113s with 869 client errors and only 11% success → hypothesized uvicorn's default single-worker thread pool (~12 threads) was saturated: at 10 RPS × ~45s/request the backlog was ~450 concurrent requests, far beyond capacity. Changed to `--workers 4` (~48 threads). Result: client errors dropped to 45, success rate jumped to 79%, P50 halved to 18.9s — but P95 only moved to 95.7s. The congestion loop partially broke but per-call vLLM latency rose from ~2s to ~6s, indicating vLLM is now also under load.
+
+**Iteration 2:**
+Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth, causing each call to slow down. Changed `--max-num-seqs 128 → 32` to cap concurrency: fewer sequences run simultaneously, each gets more GPU bandwidth, per-call latency should drop. Queue depth will rise but calls will be faster.
 
 ---
 
