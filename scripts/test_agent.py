@@ -16,7 +16,7 @@ for question, db in questions:
     }, timeout=120)
     data = r.json()
     print(f"  SQL:        {data.get('sql', '')[:100]}")
-    print(f"  Rows:       {data.get('rows', [])[:3]}")
+    print(f"  Rows:       {(data.get('rows') or [])[:3]}")
     print(f"  Iterations: {data.get('iterations')}")
     print(f"  OK:         {data.get('ok')}")
     if data.get("error"):
