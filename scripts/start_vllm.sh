@@ -15,4 +15,5 @@ exec uv run python -m vllm.entrypoints.openai.api_server \
     --max-model-len 4096 \
     --max-num-seqs 128 \
     --enable-prefix-caching \
+    --enable-chunked-prefill \
     --kv-cache-dtype fp8
