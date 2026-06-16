@@ -56,8 +56,11 @@ def answer(req: AnswerRequest) -> AnswerResponse:
     callbacks: list[Any] = []
     if _langfuse_enabled:
         from langfuse.langchain import CallbackHandler
-        callbacks = [CallbackHandler(metadata={"db": req.db, **req.tags})]
-    config: dict[str, Any] = {"callbacks": callbacks}
+        callbacks = [CallbackHandler()]
+    config: dict[str, Any] = {
+        "callbacks": callbacks,
+        "metadata": {"db": req.db, **req.tags},
+    }
     try:
         final = graph.invoke(state, config=config)
     except Exception as e:  # noqa: BLE001
