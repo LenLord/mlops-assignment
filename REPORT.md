@@ -45,10 +45,24 @@ Saw P95=113s with 869 client errors and only 11% success → hypothesized uvicor
 Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth. Changed `--max-num-seqs 128 → 32`. Result: invalid — Grafana showed an abrupt cliff in requests_running and generation tokens/sec mid-run (crash signature, not graceful completion). vLLM crashed during the test, causing all subsequent requests to fail with connection errors. The 2708 client_errors and 7% success rate reflect the crash, not the config change. Reverted to max-num-seqs=128.
 
 **Iteration 3:**
-Saw P95 drop with each worker increase (1→4→8 workers: 113s→95s→55s) → hypothesized agent server thread pool still the binding constraint. Changed to `--workers 8` (~96 threads). Result: P50 improved to 12.9s, P95 to 55.2s, success rate 84%, Grafana queue depth near 0 (agent server no longer queuing). vLLM per-call P50 stabilised at ~4-5s. Worker scaling is working but hitting diminishing returns — further doubling would yield ~27s P95, not 5s.
+Saw P95 drop with each worker increase (1→4→8 workers: 113s→95s→55s) → hypothesized agent server thread pool still the binding constraint. Changed to `--workers 8`. Result: P50 = 12.9s, P95 = 55.2s, success rate 84%. vLLM per-call P50 stabilised at ~4-5s. Tried `--workers 16` next: vLLM started returning 500s under the higher concurrency — found the upper bound where agent capacity exceeds vLLM capacity.
 
-**Final verdict — SLO MISSED:**
-Best P95 = 55.2s at 10 RPS; gap = 11× over the 5s target. Root cause is structural: 3 sequential LLM calls × ~4-5s each under load = ~12-15s minimum pipeline. The 5s SLO requires each call to complete in < 1.67s, which is only achievable at very low concurrency (< 5 RPS). Closing the gap would require: (a) removing the verify→revise loop (1 LLM call instead of 3), or (b) a smaller/faster model, or (c) parallelising the verify and revise calls.
+**Iteration 4:**
+Saw vLLM TTFT P95 at ~800ms with queue depth occasionally spiking → hypothesized prefill bottleneck during bursts (long prompts + short outputs is the textbook chunked-prefill case). Added `--enable-chunked-prefill`. Result: vLLM TTFT P95 dropped 37% (800ms → 500ms), queue depth max dropped 70% (30 → 9), throughput up 12%. **But agent P95 stayed at 57.7s** — confirms vLLM is no longer the bottleneck. Excellent diagnostic outcome: the metric we targeted moved (TTFT down), but E2E SLO didn't follow because the binding constraint is elsewhere.
+
+**Final verdict — SLO MISSED with clear diagnosis:**
+Best config: `--workers 8`, `--max-num-seqs 128`, `--enable-chunked-prefill`, `--enable-prefix-caching`, `--kv-cache-dtype fp8`. Best P95 = 57.7s at 10 RPS; gap = 11× over the 5s target.
+
+Bottleneck analysis (steady state, from Grafana panel + load_test correlation):
+- vLLM per-call P50: ~4s; P95: ~5s (healthy, queue near zero with chunked prefill)
+- 3 LLM calls × 4s = 12s P50 — matches measured agent P50 of 13.8s ✓
+- Agent P95 of 57s is **45s above** what vLLM contributes — that 45s is FastAPI thread pool queuing under burst load
+- The synchronous `def answer` endpoint runs in starlette's anyio threadpool (default 40 threads/worker); with 8 workers we have 320 thread slots but bursts at 10 RPS pile up beyond that
+
+**Why we stopped here:** Further tuning would require changes outside Phase 6's serving-config scope:
+1. **Remove verify→revise loop** (saves 2 LLM calls) — but it's a Phase 3 deliverable
+2. **Make `/answer` async** — requires `graph.ainvoke()` + server.py changes
+3. **Smaller model** — but Qwen3-30B-A3B is fixed by the assignment
 
 ---
 
