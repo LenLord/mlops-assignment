@@ -10,7 +10,10 @@ questions = [
 
 for question, db in questions:
     print(f"\nQ: {question[:80]}... [{db}]")
-    r = httpx.post("http://localhost:8001/answer", json={"question": question, "db": db}, timeout=120)
+    r = httpx.post("http://localhost:8001/answer", json={
+        "question": question, "db": db,
+        "tags": {"phase": "test", "db_id": db},
+    }, timeout=120)
     data = r.json()
     print(f"  SQL:        {data.get('sql', '')[:100]}")
     print(f"  Rows:       {data.get('rows', [])[:3]}")
