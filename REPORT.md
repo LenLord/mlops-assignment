@@ -42,10 +42,13 @@ SLO target: P95 agent latency < 5s at 10 RPS over a 5-minute window.
 Saw P95=113s with 869 client errors and only 11% success → hypothesized uvicorn's default single-worker thread pool (~12 threads) was saturated: at 10 RPS × ~45s/request the backlog was ~450 concurrent requests, far beyond capacity. Changed to `--workers 4` (~48 threads). Result: client errors dropped to 45, success rate jumped to 79%, P50 halved to 18.9s — but P95 only moved to 95.7s. The congestion loop partially broke but per-call vLLM latency rose from ~2s to ~6s, indicating vLLM is now also under load.
 
 **Iteration 2:**
-Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth. Changed `--max-num-seqs 128 → 32`. Result: backfired badly — queue depth exploded from 25 to ~150, vLLM per-call E2E latency spiked to 2 minutes, client_errors jumped from 45 to 2708, success rate collapsed to 7%. Fewer slots means faster individual calls but a far deeper queue; net latency got much worse. Reverted to max-num-seqs=128.
+Saw Grafana queue depth spike to 25-30 and requests_running near 100 (approaching max-num-seqs=128), with vLLM per-call latency rising from 2s to 4-7s → hypothesized too many concurrent sequences competing for GPU memory bandwidth. Changed `--max-num-seqs 128 → 32`. Result: invalid — Grafana showed an abrupt cliff in requests_running and generation tokens/sec mid-run (crash signature, not graceful completion). vLLM crashed during the test, causing all subsequent requests to fail with connection errors. The 2708 client_errors and 7% success rate reflect the crash, not the config change. Reverted to max-num-seqs=128.
 
-**Iteration 3 — Structural SLO gap analysis:**
-Best achieved config: `--workers 4, --max-num-seqs 128` → P95=95.7s, 79% success rate. The SLO (P95 < 5s) requires each of 3 sequential LLM calls to complete in under 1.67s. Under 10 RPS load vLLM serves these calls at 4-7s each — the gap is structural, not tunable with vLLM flags alone. Closing it would require: (a) reducing agent LLM calls from 3 to 1 (remove verify/revise loop), or (b) a smaller/faster model. **SLO verdict: MISSED. Best P95 = 95.7s, gap = 19× over the 5s target.**
+**Iteration 3:**
+Saw P95 drop with each worker increase (1→4→8 workers: 113s→95s→55s) → hypothesized agent server thread pool still the binding constraint. Changed to `--workers 8` (~96 threads). Result: P50 improved to 12.9s, P95 to 55.2s, success rate 84%, Grafana queue depth near 0 (agent server no longer queuing). vLLM per-call P50 stabilised at ~4-5s. Worker scaling is working but hitting diminishing returns — further doubling would yield ~27s P95, not 5s.
+
+**Final verdict — SLO MISSED:**
+Best P95 = 55.2s at 10 RPS; gap = 11× over the 5s target. Root cause is structural: 3 sequential LLM calls × ~4-5s each under load = ~12-15s minimum pipeline. The 5s SLO requires each call to complete in < 1.67s, which is only achievable at very low concurrency (< 5 RPS). Closing the gap would require: (a) removing the verify→revise loop (1 LLM call instead of 3), or (b) a smaller/faster model, or (c) parallelising the verify and revise calls.
 
 ---
 
